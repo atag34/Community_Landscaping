@@ -2,7 +2,7 @@
 title: "Community_Landscaping"
 author: "Anthony Tagliente"
 date: "8/3/2020"
-output: html_document
+output: github_document
 ---
 
 ```{r setup, include=FALSE}
