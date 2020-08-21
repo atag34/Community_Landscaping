@@ -70,34 +70,12 @@ AND (Locations NOT LIKE '%New Mexico%' OR V2Locations NOT LIKE '%New Mexico%')
 LIMIT 10000
 ```
 
-I saved the json output here for this demonstration which can be read
+I saved the scv output here for this demonstration which can be read
 into R:
 
 ``` r
-g_dat <- lapply(readLines("Gdelt_Results.json"), fromJSON)
-g_dat <- bind_rows(g_dat)
-```
+results <- read.csv("results-20200806-140844.csv", stringsAsFactors = F)
 
-## Formating
-
-Since the output contains columns with multiple observations seperated
-by ‘;’ we need to split them up into individual obervations, normalize
-them a bit and remove id numbers added by GDELT where applicable. (EX:
-‘Conway Medical Center,5906’)
-
-``` r
-g_dat$Organizations[1]
-```
-
-    ## [1] "pikeville medical center;saint agnes medical center;anne arundel medical center;baltimore sun"
-
-``` r
-g_dat$V2Organizations[101]
-```
-
-    ## [1] "University Of California,732;Conway Medical Center,5906;Coroner Office,4592;Kaiser Permanente Fresno Medical Center,4750;Kaiser Health News,315;Kaiser Health News,2157;Facebook,4788;Facebook,5738"
-
-``` r
 g_dat <- as.data.frame(
               table(
                   tolower(
@@ -105,30 +83,225 @@ g_dat <- as.data.frame(
                           pattern = ",\\d+$",
                           replacement = "",
                           x = unlist(
-                                  strsplit(x=c(g_dat$Organizations,g_dat$V2Organizations),
+                                  strsplit(x=c(results$Organizations),
                                   split=";")),
                           perl = T
                       )
                   )
               )
           )
+
+#split links into a list to be iterated on later
+g_dat$links <- lapply(g_dat$Var1, FUN =function(x){results$DocumentIdentifier[which(grepl(x,results$Organizations))]})
 ```
 
 This will create a data frame of organizations and the frequency which
 they appear in the data set.
 
 ``` r
-head(arrange(.data = g_dat,desc(g_dat$Freq)),10)
+#head(arrange(.data = g_dat,desc(g_dat$Freq)),10)
 ```
 
-    ##                           Var1 Freq
-    ## 1                united states 4827
-    ## 2                         espn 1142
-    ## 3                     facebook  818
-    ## 4           pine mountain club  814
-    ## 5                          cnn  779
-    ## 6  california state university  614
-    ## 7                      twitter  559
-    ## 8               sheriff office  453
-    ## 9                    instagram  429
-    ## 10                      disney  419
+I will manually run through some names that seem like they should be
+excluded. My reasoning being that they are either obviously of national
+interest or may be a news source rather than the topic. I tried to leave
+anything ambigious in.
+
+``` r
+remove_orgs <- c('united states',
+                 'facebook',
+                 'cnn',
+                 'twitter',
+                 'associated press',
+                 'instagram',
+                 'white house',
+                 'international monetary fund',
+                 'youtube',
+                 'new york times',
+                 'google',
+                 'reuters',
+                 'washington post',
+                 'olympics',
+                 'linkedin')
+
+g_dat <- g_dat[!g_dat$Var1 %in% remove_orgs, ]
+
+# head(arrange(.data = g_dat,desc(g_dat$Freq)),10)
+```
+
+We can add a field to collect the text of the news article links. If
+running this for yourself, it will take a bit of time. This process
+could be improved with asynch requests which I will come back and adjust
+another time.
+
+``` r
+g_dat$webtext <- NA
+
+for (i in which(is.na(g_dat$webtext))){
+  org_text <- list()
+    
+    for (k in 1:length(g_dat$links[[i]])){
+      tryCatch({
+    page <- read_html(GET(g_dat$links[[i]][k],timeout(5)))
+    # or this for the text under the p nodes
+    p_text<-page%>% html_nodes("p") %>% html_text()
+    org_text[[k]] <- p_text
+    message(k,' of ',length(g_dat$links[[i]]),' for org ',i,' of ',nrow(g_dat),' ',paste(as.character(g_dat$Var1[i])))
+    #Sys.sleep(1)
+    closeAllConnections()
+  },error = function(e){})
+    }
+g_dat$webtext[i] <- paste0(unlist(org_text),collapse =" ")  
+}
+# add rownames which are used as Doc IDs for corpus
+rownames(g_dat) <- g_dat$Var1
+
+#Saving dataframe as backup and to have as an easily usable example for this markdown
+write.csv(g_dat[,-3],"web_text.csv")
+```
+
+``` r
+# Read in if you are running this interactivly.
+g_dat_in <- read.csv("web_text.csv", row.names = "X")
+```
+
+Now that we have a table containing the org names as well as the text of
+the news articles linked in the gdelt database. We can begin to
+construct a corpus, which is a useful object for doing text analysis.
+
+In this case I will be using the `quanteda` package and the `tm`
+package.
+
+``` r
+web_corp <- corpus(g_dat_in[,c("Freq","webtext")], text_field = "webtext")
+
+my_corp <- Corpus(VectorSource(web_corp))
+my_corp <- tm_map(my_corp,content_transformer(tolower))
+my_corp <- tm_map(my_corp,removePunctuation)
+my_corp <- tm_map(my_corp,removeNumbers)
+my_corp <- tm_map(my_corp,stripWhitespace)
+my_corp <- tm_map(my_corp,stemDocument)
+my_corp <- tm_map(my_corp,removeWords,stopwords('en'))
+my_corp <- corpus(my_corp)
+
+dtm <- dfm(my_corp)
+
+
+
+# filter terms that occur in less than 5% of org news and more than 90% of org news to try and elminiate random sparse ness and or
+# irrelevant words to understanding similarity. Somewhat arbitrary choice
+web_dtm_filt  <- dfm_trim(dtm,
+                              min_docfreq = 0.05,
+                              max_docfreq = 0.9,
+                              docfreq_type = "prop"
+)
+web_dtm_filt
+```
+
+    ## Document-feature matrix of: 269 documents, 5,508 features (79.1% sparse).
+    ##                                         features
+    ## docs                                     women radio network internet peopl dan
+    ##   afghan women association international   429   162      70       23    78   3
+    ##   albertsons                                 0     0       0        0    45   0
+    ##   alcan                                      1     0       2        0    33   0
+    ##   america open technology institute          0     0       0       14    43   0
+    ##   american civil liberties union            22     1       2        0    46   0
+    ##   american community survey                  0     0       0        0    33   0
+    ##                                         features
+    ## docs                                     hill presid logic inc
+    ##   afghan women association international    1     25     1   3
+    ##   albertsons                                9      0     0   0
+    ##   alcan                                     0      2     1   1
+    ##   america open technology institute        14     43     0   0
+    ##   american civil liberties union            1      4     0   0
+    ##   american community survey                 0      2     0   0
+    ## [ reached max_ndoc ... 263 more documents, reached max_nfeat ... 5,498 more features ]
+
+We now have a Document Feature Matrix, which is similar to a Document
+Term Matrix adjusted to work with other quanteda functions. Since the
+goal here is to have an easily interpretible chart, it would be nice to
+understand what words are being associated with what orgs, partiularly
+to check that the cluistering makes sense.
+
+Since we don’t already know what any topics should be we can use an un
+supervised approach to topic modeling using the LDA function from the
+`textmodels` package.
+
+``` r
+# We can add a layer of topic modeling to give us a better insight into similar org news texts and common words associated with their grouping.
+
+# Create a topic model object from the corpus
+dtm_topics <- convert(web_dtm_filt, to = "topicmodels")
+
+# and use the LDA function to determine 20 topic clusters, the number can be better optimized. This will take a bit of time to finish running.
+lda <- topicmodels::LDA(dtm_topics, k = 20)
+
+get_terms(lda,5)
+```
+
+    ##      Topic 1     Topic 2    Topic 3     Topic 4   Topic 5   Topic 6      
+    ## [1,] "household" "food"     "fish"      "fbi"     "polic"   "energi"     
+    ## [2,] "share"     "american" "river"     "tech"    "offic"   "project"    
+    ## [3,] "median"    "today"    "water"     "appl"    "counti"  "develop"    
+    ## [4,] "citi"      "whether"  "fli"       "iphon"   "report"  "environment"
+    ## [5,] "photo"     "america"  "reservoir" "compani" "sheriff" "clean"      
+    ##      Topic 7 Topic 8  Topic 9  Topic 10  Topic 11  Topic 12 Topic 13
+    ## [1,] "low"   "fire"   "counti" "student" "drug"    "prison" "women" 
+    ## [2,] "high"  "counti" "case"   "colleg"  "generic" "inmat"  "radio" 
+    ## [3,] "mph"   "nation" "health" "univers" "health"  "viral"  "also"  
+    ## [4,] "wind"  "offic"  "covid"  "may"     "price"   "featur" "lynch" 
+    ## [5,] "feet"  "two"    "public" "aid"     "compani" "via"    "creat" 
+    ##      Topic 14    Topic 15 Topic 16  Topic 17  Topic 18 Topic 19  Topic 20
+    ## [1,] "tree"      "mask"   "fight"   "year"    "court"  "mani"    "newsom"
+    ## [2,] "say"       "health" "zoom"    "school"  "case"   "year"    "gavin" 
+    ## [3,] "chill"     "wear"   "white"   "work"    "feder"  "yearold" "gov"   
+    ## [4,] "pistachio" "public" "event"   "peopl"   "law"    "plan"    "covid" 
+    ## [5,] "winter"    "face"   "compani" "student" "use"    "now"     "food"
+
+We also want to significantly reduce the number of dimensions in order
+to better explain the data. t.sne is very good at reducing and high
+numbers of dimensions for the purpose of visualizations.
+
+``` r
+dat_tsne <- tsne(dtm_topics)
+```
+
+    ## Warning in if (class(X) == "dist") {: the condition has length > 1 and only the
+    ## first element will be used
+
+    ## sigma summary: Min. : 0.240969594214663 |1st Qu. : 0.45820397339818 |Median : 0.72637107940506 |Mean : 0.771875900737361 |3rd Qu. : 1.1151539880689 |Max. : 1.45051369086749 |
+
+    ## Epoch: Iteration #100 error is: 15.118095005869
+
+    ## Epoch: Iteration #200 error is: 0.415095401752213
+
+    ## Epoch: Iteration #300 error is: 0.373262251199922
+
+    ## Epoch: Iteration #400 error is: 0.33606705868988
+
+    ## Epoch: Iteration #500 error is: 0.335552052885724
+
+    ## Epoch: Iteration #600 error is: 0.335441817158021
+
+    ## Epoch: Iteration #700 error is: 0.335425096781154
+
+    ## Epoch: Iteration #800 error is: 0.335247605493356
+
+    ## Epoch: Iteration #900 error is: 0.335091028089243
+
+    ## Epoch: Iteration #1000 error is: 0.335082180851604
+
+# Making the Final Plot.
+
+``` r
+topic_words <- sapply(get_topics(lda),FUN =  function(x){paste(get_terms(lda,5)[,x], collapse = ", ")})
+
+p <- ggplot(as.data.frame(dat_tsne), aes(x = V1, y = V2,label = rownames(dtm_topics),text=topic_words,color=as.factor(get_topics(lda)))) + 
+  geom_point()
+# using ggplotly we can plot an interactive html version. However this is not supported for RMarkdown on github.
+# pp <- ggplotly(p)
+
+p
+```
+
+![](example_files/figure-gfm/unnamed-chunk-9-1.png)<!-- -->
