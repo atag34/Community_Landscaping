@@ -44,11 +44,11 @@ names <- result[,173]
 all[is.na(all)] <- 0
 all <- all[, colSums(all, na.rm = TRUE) >= 100]
 
-# system.time( 
-# fa.parallel(all, #The data in question.
-#             fa = "pc", #Display the eigenvalues for PCA.
-#             n.iter = 100) #Number of simulated analyses to perform.
-# )
+system.time( 
+fa.parallel(all, #The data in question.
+             fa = "pc", #Display the eigenvalues for PCA.
+             n.iter = 100) #Number of simulated analyses to perform.
+)
 #abline(h = 1)
 
 pc_text = principal(all, #The data in question.
