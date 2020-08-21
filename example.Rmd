@@ -32,7 +32,7 @@ You can read more about GDELT specifically on their website <https://www.gdeltpr
 We will specifically be using the Global Knowledge Graph data set from google BigQuery <https://www.gdeltproject.org/data.html#googlebigquery> in orger to build a base set of organizations and their number of menttions.
 
 ## Google BigQuery
-You will need an account with billing information attached to use google BigQuery services. If you plan to make adjustments, I would recommend testing them on tight date parameters to limit the amount of data you are querying. This can and waste resources, which you may incur a cost for at some point. There is more information on pricing etc. at <https://cloud.google.com/bigquery/?utm_source=google&utm_medium=cpc&utm_campaign=na-US-all-en-dr-skws-all-all-trial-p-dr-1009135&utm_content=text-ad-none-any-DEV_c-CRE_288513563439-ADGP_Hybrid+%7C+AW+SEM+%7C+SKWS+%7C+US+%7C+en+%7C+PHR+~+Big+Data+~+BigQuery+~+bigquery-KWID_43700035823139005-kwd-301529154162&utm_term=KW_bigquery-ST_bigquery&gclid=Cj0KCQjw6575BRCQARIsAMp-ksNNLFJ0P1lbf6gjy_0Hvr2aGdsTm5UHPwgVeQ-HBZgaa9sgQhoPTQUaAkO2EALw_wcB#section-10>
+You will need an account with billing information attached to use google BigQuery services. If you plan to make adjustments, I would recommend testing them on tight date parameters to limit the amount of data you are querying. This can and waste resources, which you may incur a cost for at some point. There is more information on pricing etc. at [Google Pricing](https://cloud.google.com/bigquery/?utm_source=google&utm_medium=cpc&utm_campaign=na-US-all-en-dr-skws-all-all-trial-p-dr-1009135&utm_content=text-ad-none-any-DEV_c-CRE_288513563439-ADGP_Hybrid+%7C+AW+SEM+%7C+SKWS+%7C+US+%7C+en+%7C+PHR+~+Big+Data+~+BigQuery+~+bigquery-KWID_43700035823139005-kwd-301529154162&utm_term=KW_bigquery-ST_bigquery&gclid=Cj0KCQjw6575BRCQARIsAMp-ksNNLFJ0P1lbf6gjy_0Hvr2aGdsTm5UHPwgVeQ-HBZgaa9sgQhoPTQUaAkO2EALw_wcB#section-10)
 
 As this is a proof of concept test, and an ongoing project, there is still some work to be done on improving the search criteria. For now, I have identified two ways for fresno to be tagged while trying to keep it specifically to California. I have allso tried to exlude what I had found to be common additional locations tags of articles creating extra noise in the data.
 
@@ -64,8 +64,18 @@ LIMIT 10000
 I saved the scv output here for this demonstration which can be read into R:
 
 ```{r, echo=T}
+# csv of results from gdelt search
 results <- read.csv("results-20200806-140844.csv", stringsAsFactors = F)
 
+# showing Organizations column for first row
+results$Organizations[1]
+```
+We can see that the data will need to split by the `:` character, to improve the odds of correctly counting their frequency, we want to clean the names of numbers and force all letter to lower case.
+
+Then we can add a links column and fill it with all links from our GDELT results with the organizations name mentioned.
+
+```{r, echo=T}
+# Create a new dataframe based on a frequency table of the organizations in our results object
 g_dat <- as.data.frame(
               table(
                   tolower(
@@ -81,16 +91,25 @@ g_dat <- as.data.frame(
               )
           )
 
-#split links into a list to be iterated on later
-g_dat$links <- lapply(g_dat$Var1, FUN =function(x){results$DocumentIdentifier[which(grepl(x,results$Organizations))]})
+# search for links where the organizations name(Var1) occurs in the organizations column and add it to the g_dat table we created in the links column.
+g_dat$links <- lapply(g_dat$Var1,
+                      FUN=function(x){
+                        results$DocumentIdentifier[which(
+                                                      grepl(x,
+                                                            results$Organizations
+                                                            )
+                                                      )
+                                                   ]
+                        }
+                      )
 
 ```
 
-This will create a data frame of organizations and the frequency which they appear in the data set.
+This will create a data frame of organizations and the frequency which they appear in the data set and the links to articles their name was mentioned in.
 ```{r, echo=T}
 #head(arrange(.data = g_dat,desc(g_dat$Freq)),10)
 ```
-I will manually run through some names that seem like they should be excluded. My reasoning being that they are either obviously of national interest or may be a news source rather than the topic. I tried to leave anything ambigious in.
+I will manually run through some names that seem like they should be excluded. My reasoning being that they are either obviously of national interest or may be a news source rather than the topic. I tried to leave anything ambigious in. Leaving more names to search through will increase the amount of noise but also potentially capture more important organizations you might be interested in.1
 ```{r, echo=T}
 remove_orgs <- c('united states',
                  'facebook',
@@ -108,6 +127,7 @@ remove_orgs <- c('united states',
                  'olympics',
                  'linkedin')
 
+# Remove rows where the name is in the above list
 g_dat <- g_dat[!g_dat$Var1 %in% remove_orgs, ]
 
 # head(arrange(.data = g_dat,desc(g_dat$Freq)),10)
@@ -126,7 +146,7 @@ for (i in which(is.na(g_dat$webtext))){
     # or this for the text under the p nodes
     p_text<-page%>% html_nodes("p") %>% html_text()
     org_text[[k]] <- p_text
-    message(k,' of ',length(g_dat$links[[i]]),' for org ',i,' of ',nrow(g_dat),' ',paste(as.character(g_dat$Var1[i])))
+    message(k,' of ',length(g_dat$links[[i]]),' for org ',i,' of ',nrow(g_dat),'',paste(as.character(g_dat$Var1[i])))
     #Sys.sleep(1)
     closeAllConnections()
   },error = function(e){})
@@ -183,12 +203,12 @@ Since we don't already know what any topics should be we can use an un supervise
 # Create a topic model object from the corpus
 dtm_topics <- convert(web_dtm_filt, to = "topicmodels")
 
-# and use the LDA function to determine 20 topic clusters, the number can be better optimized. This will take a bit of time to finish running.
-lda <- topicmodels::LDA(dtm_topics, k = 20)
+# and use the LDA function to determine 15 topic clusters, the number can be better optimized. This will take a bit of time to finish running.
+lda <- topicmodels::LDA(dtm_topics, k = 15)
 
 get_terms(lda,5)
 ```
-We also want to significantly reduce the number of dimensions in order to better explain the data.
+We also want to significantly reduce the number of dimensions in order to better display the data.
 t.sne is very good at reducing and high numbers of dimensions for the purpose of visualizations.
 ```{r, echo=T}
 dat_tsne <- tsne(dtm_topics)
@@ -196,13 +216,38 @@ dat_tsne <- tsne(dtm_topics)
 # Making the Final Plot.
 ```{r, echo=T,eval=T}
 
-topic_words <- sapply(get_topics(lda),FUN =  function(x){paste(get_terms(lda,5)[,x], collapse = ", ")})
+topic_words <- sapply(get_topics(lda),
+                      FUN = function(x){
+                                paste(get_terms(lda,5)[,x],
+                                      collapse = ", ")
+                        }
+                      )
+Topic_Cluster <- as.factor(get_topics(lda))
 
-p <- ggplot(as.data.frame(dat_tsne), aes(x = V1, y = V2,label = rownames(dtm_topics),text=topic_words,color=as.factor(get_topics(lda)))) + 
-  geom_point()
-# using ggplotly we can plot an interactive html version. However this is not supported for RMarkdown on github.
-# pp <- ggplotly(p)
+p <- ggplot(
+        as.data.frame(dat_tsne), 
+        aes(
+          x = V1, 
+          y = V2,
+          text=paste0('Organization:',rownames(dtm_topics),
+                      "\n",
+                     'Terms:',topic_words),
+          color=Topic_Cluster)
+        ) +
+      geom_point() +
+      labs(title='Organization Cluster: Fresno, CA',
+           color='Topic Cluster') 
 
 p
 
 ```
+Using an interactive version of the chart, you can explore the various clusters and try to determine connections through external research. Using the `plotly` package and the `ggplotly()` function you can easily convert our previous ggplot2 chart into a plotly interactive chart.
+```{r,echo=T,eval=F}
+pi <- ggplotly(p)
+pi
+```
+![Sample of interactive version.](Interactive_plot.png)
+As a brief example, looking in a grouping that seems to be mostly police offices, we see close by a company called del rey packing co. Which would seem a bit odd as to why they might have similar news about them. 
+![Zoomed area of plot with labels.](del_ray_packaging.png)
+You can probably infer they have some involvement with police but by searching online you can verify that relationship. 
+![https://ktla.com/news/local-news/woman-dies-after-hair-clothing-get-caught-in-raisin-processin-machine-in-fresno-county/.](del_ray_news.png)
