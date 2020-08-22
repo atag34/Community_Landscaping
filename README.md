@@ -32,8 +32,8 @@ You will need an account with billing information attached to use google
 BigQuery services. If you plan to make adjustments, I would recommend
 testing them on tight date parameters to limit the amount of data you
 are querying. This can and waste resources, which you may incur a cost
-for at some point. There is more information on pricing etc. at
-<https://cloud.google.com/bigquery/?utm_source=google&utm_medium=cpc&utm_campaign=na-US-all-en-dr-skws-all-all-trial-p-dr-1009135&utm_content=text-ad-none-any-DEV_c-CRE_288513563439-ADGP_Hybrid+%7C+AW+SEM+%7C+SKWS+%7C+US+%7C+en+%7C+PHR+~+Big+Data+~+BigQuery+~+bigquery-KWID_43700035823139005-kwd-301529154162&utm_term=KW_bigquery-ST_bigquery&gclid=Cj0KCQjw6575BRCQARIsAMp-ksNNLFJ0P1lbf6gjy_0Hvr2aGdsTm5UHPwgVeQ-HBZgaa9sgQhoPTQUaAkO2EALw_wcB#section-10>
+for at some point. There is more information on pricing etc. at [Google
+Pricing](https://cloud.google.com/bigquery/?utm_source=google&utm_medium=cpc&utm_campaign=na-US-all-en-dr-skws-all-all-trial-p-dr-1009135&utm_content=text-ad-none-any-DEV_c-CRE_288513563439-ADGP_Hybrid+%7C+AW+SEM+%7C+SKWS+%7C+US+%7C+en+%7C+PHR+~+Big+Data+~+BigQuery+~+bigquery-KWID_43700035823139005-kwd-301529154162&utm_term=KW_bigquery-ST_bigquery&gclid=Cj0KCQjw6575BRCQARIsAMp-ksNNLFJ0P1lbf6gjy_0Hvr2aGdsTm5UHPwgVeQ-HBZgaa9sgQhoPTQUaAkO2EALw_wcB#section-10)
 
 As this is a proof of concept test, and an ongoing project, there is
 still some work to be done on improving the search criteria. For now, I
@@ -74,8 +74,24 @@ I saved the scv output here for this demonstration which can be read
 into R:
 
 ``` r
+# csv of results from gdelt search
 results <- read.csv("results-20200806-140844.csv", stringsAsFactors = F)
 
+# showing Organizations column for first row
+results$Organizations[1]
+```
+
+    ## [1] "instagram;democrat party;media research center;washington post;facebook;california state university;hoover institution at stanford university;national center;white house;world health organization;defense intelligence agency;monroe county public health department;united states;youtube;new york times;national security agency"
+
+We can see that the data will need to split by the `:` character, to
+improve the odds of correctly counting their frequency, we want to clean
+the names of numbers and force all letter to lower case.
+
+Then we can add a links column and fill it with all links from our GDELT
+results with the organizations name mentioned.
+
+``` r
+# Create a new dataframe based on a frequency table of the organizations in our results object
 g_dat <- as.data.frame(
               table(
                   tolower(
@@ -91,12 +107,22 @@ g_dat <- as.data.frame(
               )
           )
 
-#split links into a list to be iterated on later
-g_dat$links <- lapply(g_dat$Var1, FUN =function(x){results$DocumentIdentifier[which(grepl(x,results$Organizations))]})
+# search for links where the organizations name(Var1) occurs in the organizations column and add it to the g_dat table we created in the links column.
+g_dat$links <- lapply(g_dat$Var1,
+                      FUN=function(x){
+                        results$DocumentIdentifier[which(
+                                                      grepl(x,
+                                                            results$Organizations
+                                                            )
+                                                      )
+                                                   ]
+                        }
+                      )
 ```
 
 This will create a data frame of organizations and the frequency which
-they appear in the data set.
+they appear in the data set and the links to articles their name was
+mentioned in.
 
 ``` r
 #head(arrange(.data = g_dat,desc(g_dat$Freq)),10)
@@ -105,7 +131,9 @@ they appear in the data set.
 I will manually run through some names that seem like they should be
 excluded. My reasoning being that they are either obviously of national
 interest or may be a news source rather than the topic. I tried to leave
-anything ambigious in.
+anything ambigious in. Leaving more names to search through will
+increase the amount of noise but also potentially capture more important
+organizations you might be interested in.1
 
 ``` r
 remove_orgs <- c('united states',
@@ -124,6 +152,7 @@ remove_orgs <- c('united states',
                  'olympics',
                  'linkedin')
 
+# Remove rows where the name is in the above list
 g_dat <- g_dat[!g_dat$Var1 %in% remove_orgs, ]
 
 # head(arrange(.data = g_dat,desc(g_dat$Freq)),10)
@@ -146,7 +175,7 @@ for (i in which(is.na(g_dat$webtext))){
     # or this for the text under the p nodes
     p_text<-page%>% html_nodes("p") %>% html_text()
     org_text[[k]] <- p_text
-    message(k,' of ',length(g_dat$links[[i]]),' for org ',i,' of ',nrow(g_dat),' ',paste(as.character(g_dat$Var1[i])))
+    message(k,' of ',length(g_dat$links[[i]]),' for org ',i,' of ',nrow(g_dat),'',paste(as.character(g_dat$Var1[i])))
     #Sys.sleep(1)
     closeAllConnections()
   },error = function(e){})
@@ -233,33 +262,33 @@ supervised approach to topic modeling using the LDA function from the
 # Create a topic model object from the corpus
 dtm_topics <- convert(web_dtm_filt, to = "topicmodels")
 
-# and use the LDA function to determine 20 topic clusters, the number can be better optimized. This will take a bit of time to finish running.
-lda <- topicmodels::LDA(dtm_topics, k = 20)
+# and use the LDA function to determine 15 topic clusters, the number can be better optimized. This will take a bit of time to finish running.
+lda <- topicmodels::LDA(dtm_topics, k = 15)
 
 get_terms(lda,5)
 ```
 
-    ##      Topic 1     Topic 2    Topic 3     Topic 4   Topic 5   Topic 6      
-    ## [1,] "household" "food"     "fish"      "fbi"     "polic"   "energi"     
-    ## [2,] "share"     "american" "river"     "tech"    "offic"   "project"    
-    ## [3,] "median"    "today"    "water"     "appl"    "counti"  "develop"    
-    ## [4,] "citi"      "whether"  "fli"       "iphon"   "report"  "environment"
-    ## [5,] "photo"     "america"  "reservoir" "compani" "sheriff" "clean"      
-    ##      Topic 7 Topic 8  Topic 9  Topic 10  Topic 11  Topic 12 Topic 13
-    ## [1,] "low"   "fire"   "counti" "student" "drug"    "prison" "women" 
-    ## [2,] "high"  "counti" "case"   "colleg"  "generic" "inmat"  "radio" 
-    ## [3,] "mph"   "nation" "health" "univers" "health"  "viral"  "also"  
-    ## [4,] "wind"  "offic"  "covid"  "may"     "price"   "featur" "lynch" 
-    ## [5,] "feet"  "two"    "public" "aid"     "compani" "via"    "creat" 
-    ##      Topic 14    Topic 15 Topic 16  Topic 17  Topic 18 Topic 19  Topic 20
-    ## [1,] "tree"      "mask"   "fight"   "year"    "court"  "mani"    "newsom"
-    ## [2,] "say"       "health" "zoom"    "school"  "case"   "year"    "gavin" 
-    ## [3,] "chill"     "wear"   "white"   "work"    "feder"  "yearold" "gov"   
-    ## [4,] "pistachio" "public" "event"   "peopl"   "law"    "plan"    "covid" 
-    ## [5,] "winter"    "face"   "compani" "student" "use"    "now"     "food"
+    ##      Topic 1     Topic 2     Topic 3  Topic 4       Topic 5  Topic 6    
+    ## [1,] "household" "tree"      "court"  "coronavirus" "counti" "fish"     
+    ## [2,] "share"     "say"       "year"   "fight"       "covid"  "river"    
+    ## [3,] "median"    "chill"     "school" "wednesday"   "tular"  "water"    
+    ## [4,] "citi"      "pistachio" "us"     "peopl"       "case"   "fli"      
+    ## [5,] "photo"     "winter"    "work"   "event"       "newsom" "reservoir"
+    ##      Topic 7  Topic 8   Topic 9   Topic 10 Topic 11  Topic 12   Topic 13 
+    ## [1,] "newsom" "polic"   "women"   "mask"   "student" "today"    "fbi"    
+    ## [2,] "hospit" "offic"   "drug"    "health" "colleg"  "year"     "tech"   
+    ## [3,] "food"   "fire"    "compani" "wear"   "univers" "american" "appl"   
+    ## [4,] "valley" "counti"  "generic" "public" "may"     "graduat"  "iphon"  
+    ## [5,] "counti" "sheriff" "also"    "energi" "aid"     "high"     "compani"
+    ##      Topic 14 Topic 15
+    ## [1,] "low"    "health"
+    ## [2,] "high"   "counti"
+    ## [3,] "wind"   "case"  
+    ## [4,] "mph"    "covid" 
+    ## [5,] "feet"   "public"
 
 We also want to significantly reduce the number of dimensions in order
-to better explain the data. t.sne is very good at reducing and high
+to better display the data. t.sne is very good at reducing and high
 numbers of dimensions for the purpose of visualizations.
 
 ``` r
@@ -271,37 +300,70 @@ dat_tsne <- tsne(dtm_topics)
 
     ## sigma summary: Min. : 0.240969594214663 |1st Qu. : 0.45820397339818 |Median : 0.72637107940506 |Mean : 0.771875900737361 |3rd Qu. : 1.1151539880689 |Max. : 1.45051369086749 |
 
-    ## Epoch: Iteration #100 error is: 15.118095005869
+    ## Epoch: Iteration #100 error is: 15.5868199336183
 
-    ## Epoch: Iteration #200 error is: 0.415095401752213
+    ## Epoch: Iteration #200 error is: 0.361289849188814
 
-    ## Epoch: Iteration #300 error is: 0.373262251199922
+    ## Epoch: Iteration #300 error is: 0.331223945366042
 
-    ## Epoch: Iteration #400 error is: 0.33606705868988
+    ## Epoch: Iteration #400 error is: 0.300987417117487
 
-    ## Epoch: Iteration #500 error is: 0.335552052885724
+    ## Epoch: Iteration #500 error is: 0.299305661885399
 
-    ## Epoch: Iteration #600 error is: 0.335441817158021
+    ## Epoch: Iteration #600 error is: 0.297176245519942
 
-    ## Epoch: Iteration #700 error is: 0.335425096781154
+    ## Epoch: Iteration #700 error is: 0.288198328648763
 
-    ## Epoch: Iteration #800 error is: 0.335247605493356
+    ## Epoch: Iteration #800 error is: 0.286777577042117
 
-    ## Epoch: Iteration #900 error is: 0.335091028089243
+    ## Epoch: Iteration #900 error is: 0.278642631962738
 
-    ## Epoch: Iteration #1000 error is: 0.335082180851604
+    ## Epoch: Iteration #1000 error is: 0.278354624927647
 
 # Making the Final Plot.
 
 ``` r
-topic_words <- sapply(get_topics(lda),FUN =  function(x){paste(get_terms(lda,5)[,x], collapse = ", ")})
+topic_words <- sapply(get_topics(lda),
+                      FUN = function(x){
+                                paste(get_terms(lda,5)[,x],
+                                      collapse = ", ")
+                        }
+                      )
+Topic_Cluster <- as.factor(get_topics(lda))
 
-p <- ggplot(as.data.frame(dat_tsne), aes(x = V1, y = V2,label = rownames(dtm_topics),text=topic_words,color=as.factor(get_topics(lda)))) + 
-  geom_point()
-# using ggplotly we can plot an interactive html version. However this is not supported for RMarkdown on github.
-# pp <- ggplotly(p)
+p <- ggplot(
+        as.data.frame(dat_tsne), 
+        aes(
+          x = V1, 
+          y = V2,
+          text=paste0('Organization:',rownames(dtm_topics),
+                      "\n",
+                     'Terms:',topic_words),
+          color=Topic_Cluster)
+        ) +
+      geom_point() +
+      labs(title='Organization Cluster: Fresno, CA',
+           color='Topic Cluster') 
 
 p
 ```
 
-![](example_files/figure-gfm/unnamed-chunk-9-1.png)<!-- -->
+![](example_files/figure-gfm/unnamed-chunk-10-1.png)<!-- --> Using an
+interactive version of the chart, you can explore the various clusters
+and try to determine connections through external research. Using the
+`plotly` package and the `ggplotly()` function you can easily convert
+our previous ggplot2 chart into a plotly interactive chart.
+
+``` r
+pi <- ggplotly(p)
+pi
+```
+
+![Sample of interactive version.](Interactive_plot.png) As a brief
+example, looking in a grouping that seems to be mostly police offices,
+we see close by a company called del rey packing co. Which would seem a
+bit odd as to why they might have similar news about them. ![Zoomed area
+of plot with labels.](del_ray_packaging.png) You can probably infer they
+have some involvement with police but by searching online you can verify
+that relationship.
+![<https://ktla.com/news/local-news/woman-dies-after-hair-clothing-get-caught-in-raisin-processin-machine-in-fresno-county/>.](del_ray_news.png)
